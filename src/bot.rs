@@ -32,6 +32,7 @@ pub struct WeixinBotOptions {
     pub cdn_base_url: Option<String>,
     pub state_dir: Option<String>,
     pub account_id: Option<String>,
+    pub user_id: Option<String>,
 }
 
 pub struct StartOptions {
@@ -45,6 +46,7 @@ pub struct WeixinBot {
     base_url: String,
     cdn_base_url: String,
     account_id: String,
+    user_id: Option<String>,
     stop_tx: Arc<Mutex<Option<watch::Sender<bool>>>>,
 }
 
@@ -60,6 +62,7 @@ impl WeixinBot {
             base_url: opts.base_url.unwrap_or_else(|| DEFAULT_BASE_URL.into()),
             cdn_base_url: opts.cdn_base_url.unwrap_or_else(|| CDN_BASE_URL.into()),
             account_id,
+            user_id: opts.user_id,
             stop_tx: Arc::new(Mutex::new(None)),
         }
     }
@@ -73,6 +76,7 @@ impl WeixinBot {
             cdn_base_url: Some(account.cdn_base_url),
             state_dir: None,
             account_id: Some(account.account_id),
+            user_id: account.user_id,
         }))
     }
 
@@ -92,6 +96,7 @@ impl WeixinBot {
             cdn_base_url: Some(CDN_BASE_URL.into()),
             state_dir: None,
             account_id: waited.account_id,
+            user_id: waited.user_id,
         }))
     }
 
@@ -131,7 +136,15 @@ impl WeixinBot {
     pub fn account_id(&self) -> &str {
         &self.account_id
     }
-
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+    pub fn user_id(&self) -> Option<&str> {
+        self.user_id.as_deref()
+    }
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
     fn api_opts(&self) -> WeixinApiOptions {
         WeixinApiOptions::new(self.base_url.clone(), Some(self.token.clone()))
     }

@@ -6,7 +6,10 @@ use crate::{
         get_updates, pause_session,
     },
     messaging::process_message::{MessageHandler, ProcessMessageDeps, process_one_message},
-    storage::{get_sync_buf_file_path, load_get_updates_buf, save_get_updates_buf},
+    storage::{
+        get_sync_buf_file_path, get_sync_buf_file_path_candidates, load_get_updates_buf,
+        save_get_updates_buf,
+    },
 };
 
 const DEFAULT_LONG_POLL_TIMEOUT_MS: u64 = 35_000;
@@ -34,7 +37,10 @@ pub async fn monitor_weixin_provider(
         opts.base_url, opts.account_id
     ));
     let sync_path = get_sync_buf_file_path(&opts.account_id);
-    let mut get_updates_buf = load_get_updates_buf(&sync_path).unwrap_or_default();
+    let mut get_updates_buf = get_sync_buf_file_path_candidates(&opts.account_id)
+        .into_iter()
+        .find_map(load_get_updates_buf)
+        .unwrap_or_default();
     let mut next_timeout = opts
         .long_poll_timeout_ms
         .unwrap_or(DEFAULT_LONG_POLL_TIMEOUT_MS);

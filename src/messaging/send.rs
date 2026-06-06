@@ -8,6 +8,7 @@ use crate::{
         SendMessageReq, TextItem, VideoItem, WeixinApiOptions, WeixinMessage,
         send_message as send_message_api,
     },
+    auth::accounts::{derive_raw_account_id, normalize_account_id},
     cdn::UploadedFileInfo,
     storage::resolve_state_dir,
     util::generate_id,
@@ -32,6 +33,7 @@ pub struct WeixinMsgContext {
     pub message_sid: String,
     pub timestamp: Option<i64>,
     pub chat_type: String,
+    pub message_type: String,
     pub context_token: Option<String>,
     pub media_url: Option<String>,
     pub media_path: Option<String>,
@@ -49,10 +51,30 @@ static CONTEXT_TOKEN_STORE: Lazy<Mutex<HashMap<String, String>>> =
 fn context_token_key(account_id: &str, user_id: &str) -> String {
     format!("{account_id}:{user_id}")
 }
-fn context_token_file(account_id: &str) -> PathBuf {
+fn context_token_file_for(account_id: &str) -> PathBuf {
     resolve_state_dir()
         .join("accounts")
         .join(format!("{account_id}.context-tokens.json"))
+}
+
+fn context_token_file(account_id: &str) -> PathBuf {
+    context_token_file_for(&normalize_account_id(account_id))
+}
+
+fn context_token_file_candidates(account_id: &str) -> Vec<PathBuf> {
+    let mut ids = vec![normalize_account_id(account_id)];
+    let raw = account_id.trim().to_string();
+    if !ids.iter().any(|id| id == &raw) {
+        ids.push(raw);
+    }
+    if let Some(raw) = derive_raw_account_id(account_id)
+        && !ids.iter().any(|id| id == &raw)
+    {
+        ids.push(raw);
+    }
+    ids.into_iter()
+        .map(|id| context_token_file_for(&id))
+        .collect()
 }
 
 fn persist_context_tokens(account_id: &str) {
@@ -72,7 +94,10 @@ fn persist_context_tokens(account_id: &str) {
 }
 
 pub fn restore_context_tokens(account_id: &str) {
-    let Ok(text) = fs::read_to_string(context_token_file(account_id)) else {
+    let Some(text) = context_token_file_candidates(account_id)
+        .into_iter()
+        .find_map(|path| fs::read_to_string(path).ok())
+    else {
         return;
     };
     let Ok(tokens) = serde_json::from_str::<HashMap<String, String>>(&text) else {
@@ -160,6 +185,31 @@ pub fn body_from_item_list(item_list: Option<&[MessageItem]>) -> String {
     String::new()
 }
 
+pub fn message_type_from_item_list(item_list: Option<&[MessageItem]>) -> String {
+    let Some(items) = item_list else {
+        return "unknown".into();
+    };
+
+    for item in items {
+        match item.item_type {
+            Some(x) if x == MessageItemType::Image as i32 => return "image".into(),
+            Some(x) if x == MessageItemType::Video as i32 => return "video".into(),
+            Some(x) if x == MessageItemType::File as i32 => return "file".into(),
+            Some(x) if x == MessageItemType::Voice as i32 => return "voice".into(),
+            _ => {}
+        }
+    }
+
+    if items
+        .iter()
+        .any(|item| item.item_type == Some(MessageItemType::Text as i32))
+    {
+        "text".into()
+    } else {
+        "unknown".into()
+    }
+}
+
 pub fn weixin_message_to_msg_context(
     msg: &WeixinMessage,
     account_id: &str,
@@ -174,6 +224,7 @@ pub fn weixin_message_to_msg_context(
         message_sid: generate_client_id(),
         timestamp: msg.create_time_ms,
         chat_type: "direct".into(),
+        message_type: message_type_from_item_list(msg.item_list.as_deref()),
         context_token: msg.context_token.clone(),
         ..Default::default()
     };
@@ -276,7 +327,7 @@ pub async fn send_message_weixin(
 fn media(aes_hex: &str, param: &str) -> CdnMedia {
     CdnMedia {
         encrypt_query_param: Some(param.to_string()),
-        aes_key: Some(STANDARD.encode(hex::decode(aes_hex).unwrap_or_default())),
+        aes_key: Some(STANDARD.encode(aes_hex.as_bytes())),
         encrypt_type: Some(1),
         full_url: None,
     }

@@ -25,6 +25,7 @@ pub struct ResolvedWeixinAccount {
     pub base_url: String,
     pub cdn_base_url: String,
     pub token: Option<String>,
+    pub user_id: Option<String>,
     pub configured: bool,
 }
 
@@ -36,6 +37,39 @@ fn account_path(account_id: &str) -> PathBuf {
 }
 fn account_index_path() -> PathBuf {
     resolve_state_dir().join("accounts.json")
+}
+
+pub(crate) fn normalize_account_id(account_id: &str) -> String {
+    account_id
+        .trim()
+        .replace('@', "-")
+        .replace('.', "-")
+        .to_ascii_lowercase()
+}
+
+pub(crate) fn derive_raw_account_id(normalized_id: &str) -> Option<String> {
+    normalized_id
+        .strip_suffix("-im-bot")
+        .map(|prefix| format!("{prefix}@im.bot"))
+        .or_else(|| {
+            normalized_id
+                .strip_suffix("-im-wechat")
+                .map(|prefix| format!("{prefix}@im.wechat"))
+        })
+}
+
+fn account_path_candidates(account_id: &str) -> Vec<PathBuf> {
+    let mut ids = vec![account_id.trim().to_string()];
+    let normalized = normalize_account_id(account_id);
+    if !ids.iter().any(|id| id == &normalized) {
+        ids.push(normalized);
+    }
+    if let Some(raw) = derive_raw_account_id(account_id)
+        && !ids.iter().any(|id| id == &raw)
+    {
+        ids.push(raw);
+    }
+    ids.into_iter().map(|id| account_path(&id)).collect()
 }
 
 pub fn list_weixin_account_ids() -> Vec<String> {
@@ -69,9 +103,15 @@ pub fn unregister_weixin_account_id(account_id: &str) -> crate::Result<()> {
 }
 
 pub fn load_weixin_account(account_id: &str) -> Option<WeixinAccountData> {
-    fs::read_to_string(account_path(account_id))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+    for path in account_path_candidates(account_id) {
+        if let Some(data) = fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+        {
+            return Some(data);
+        }
+    }
+    None
 }
 
 pub fn save_weixin_account(
@@ -81,7 +121,8 @@ pub fn save_weixin_account(
     user_id: Option<&str>,
 ) -> crate::Result<()> {
     fs::create_dir_all(accounts_dir())?;
-    let existing = load_weixin_account(account_id).unwrap_or_default();
+    let account_id = normalize_account_id(account_id);
+    let existing = load_weixin_account(&account_id).unwrap_or_default();
     let token = token
         .and_then(non_empty)
         .map(ToOwned::to_owned)
@@ -101,10 +142,10 @@ pub fn save_weixin_account(
         user_id,
     };
     fs::write(
-        account_path(account_id),
+        account_path(&account_id),
         serde_json::to_string_pretty(&data)?,
     )?;
-    register_weixin_account_id(account_id)?;
+    register_weixin_account_id(&account_id)?;
     Ok(())
 }
 
@@ -151,7 +192,8 @@ pub fn resolve_weixin_account(account_id: &str) -> crate::Result<ResolvedWeixinA
     if account_id.trim().is_empty() {
         return Err("accountId is required".into());
     }
-    let data = load_weixin_account(account_id);
+    let account_id = normalize_account_id(account_id);
+    let data = load_weixin_account(&account_id);
     let token = data
         .as_ref()
         .and_then(|d| d.token.as_ref())
@@ -166,6 +208,11 @@ pub fn resolve_weixin_account(account_id: &str) -> crate::Result<ResolvedWeixinA
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
         cdn_base_url: CDN_BASE_URL.to_string(),
+        user_id: data
+            .as_ref()
+            .and_then(|d| d.user_id.as_ref())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
         configured: token.is_some(),
         token,
     })

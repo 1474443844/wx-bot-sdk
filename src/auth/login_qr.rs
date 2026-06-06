@@ -3,6 +3,7 @@ use qrcode::{QrCode, render::unicode};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
+    io::{self, Write},
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -127,6 +128,14 @@ async fn poll_qr_status(
     }
 }
 
+fn read_verify_code_from_stdin(prompt: &str) -> crate::Result<String> {
+    print!("{prompt}");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(input.trim().to_string())
+}
+
 pub fn display_qr_code(qrcode_url: &str) -> crate::Result<()> {
     if let Ok(code) = QrCode::new(qrcode_url.as_bytes()) {
         let image = code.render::<unicode::Dense1x2>().quiet_zone(false).build();
@@ -228,7 +237,29 @@ pub async fn wait_for_weixin_login(
             .unwrap_or_else(|| DEFAULT_BASE_URL.into());
         let resp = poll_qr_status(&base, &login.qrcode, login.pending_verify_code.as_deref()).await;
         match resp.status.as_str() {
-            "wait" | "scaned" | "need_verifycode" => {}
+            "wait" => {}
+            "scaned" => {
+                if login.pending_verify_code.take().is_some() {
+                    ACTIVE_LOGINS
+                        .lock()
+                        .unwrap()
+                        .insert(session_key.to_string(), login);
+                }
+                println!("正在验证");
+            }
+            "need_verifycode" => {
+                let prompt = if login.pending_verify_code.is_some() {
+                    "❌ 你输入的数字不匹配，请重新输入："
+                } else {
+                    "输入手机微信显示的数字，以继续连接："
+                };
+                login.pending_verify_code = Some(read_verify_code_from_stdin(prompt)?);
+                ACTIVE_LOGINS
+                    .lock()
+                    .unwrap()
+                    .insert(session_key.to_string(), login);
+                continue;
+            }
             "expired" | "verify_code_blocked" => {
                 qr_refresh_count += 1;
                 if qr_refresh_count > MAX_QR_REFRESH_COUNT {
@@ -289,7 +320,11 @@ pub async fn wait_for_weixin_login(
                     )?;
                 }
                 if let Some(user_id) = resp.ilink_user_id.as_deref() {
-                    clear_stale_accounts_for_user_id(&account_id, user_id)?;
+                    let normalized_account_id = account_id
+                        .replace('@', "-")
+                        .replace('.', "-")
+                        .to_ascii_lowercase();
+                    clear_stale_accounts_for_user_id(&normalized_account_id, user_id)?;
                 }
                 return Ok(WeixinQrWaitResult {
                     connected: true,

@@ -49,6 +49,7 @@ impl MultiWeixinBot {
                         .or_else(|| Some(CDN_BASE_URL.to_string())),
                     state_dir: opts.state_dir.clone(),
                     account_id: account.account_id,
+                    user_id: None,
                 })
             })
             .collect();
