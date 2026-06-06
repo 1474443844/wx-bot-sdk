@@ -19,7 +19,7 @@ use crate::{
 
 const ACTIVE_LOGIN_TTL: Duration = Duration::from_secs(5 * 60);
 const QR_LONG_POLL_TIMEOUT_MS: u64 = 35_000;
-const DEFAULT_ILINK_BOT_TYPE: &str = "openclaw";
+const DEFAULT_ILINK_BOT_TYPE: &str = "3";
 const MAX_QR_REFRESH_COUNT: u32 = 3;
 
 #[derive(Clone, Debug)]
