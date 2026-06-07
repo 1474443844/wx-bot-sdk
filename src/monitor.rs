@@ -114,7 +114,9 @@ pub async fn monitor_weixin_provider(
                         token: opts.token.clone(),
                         on_message: opts.on_message.clone(),
                     };
-                    process_one_message(msg, &deps).await?;
+                    if let Err(err) = process_one_message(msg, &deps).await {
+                        log.error(format!("process message failed: {err:?}"));
+                    }
                 }
             }
             Err(err) => {

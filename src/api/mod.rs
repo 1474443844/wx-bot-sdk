@@ -425,19 +425,41 @@ pub async fn api_get_fetch(
     Ok(text)
 }
 
+fn is_request_timeout(err: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
+    err.downcast_ref::<reqwest::Error>()
+        .map(|err| err.is_timeout())
+        .unwrap_or(false)
+}
+
 pub async fn get_updates(params: GetUpdatesReq, opts: &WeixinApiOptions) -> Result<GetUpdatesResp> {
+    let get_updates_buf = params.get_updates_buf.unwrap_or_default();
     let timeout = opts
         .long_poll_timeout_ms
         .or(opts.timeout_ms)
         .unwrap_or(DEFAULT_LONG_POLL_TIMEOUT_MS);
-    let raw = api_post_fetch(
+    let raw = match api_post_fetch(
         &opts.base_url,
         "ilink/bot/getupdates",
-        json!({"get_updates_buf": params.get_updates_buf.unwrap_or_default(), "base_info": build_base_info()}).to_string(),
+        json!({"get_updates_buf": get_updates_buf, "base_info": build_base_info()}).to_string(),
         opts.token.as_deref(),
         Some(timeout),
         "getUpdates",
-    ).await?;
+    )
+    .await
+    {
+        Ok(raw) => raw,
+        Err(err) if is_request_timeout(err.as_ref()) => {
+            return Ok(GetUpdatesResp {
+                ret: Some(0),
+                errcode: None,
+                errmsg: None,
+                msgs: Some(Vec::new()),
+                get_updates_buf: Some(get_updates_buf),
+                longpolling_timeout_ms: None,
+            });
+        }
+        Err(err) => return Err(err),
+    };
     Ok(serde_json::from_str(&raw)?)
 }
 
